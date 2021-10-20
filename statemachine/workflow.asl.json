@@ -1,0 +1,19 @@
+{
+  "Comment": "An example of the Amazon States Language for starting a task and waiting for a callback.",
+  "StartAt": "Send Message and Wait for Callback",
+  "States": {
+    "Send Message and Wait for Callback": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "HeartbeatSeconds": 600,
+      "Parameters": {
+        "QueueUrl": "${QueueUrl}",
+        "MessageBody": {
+          "MessageTitle": "Task started by Step Functions. Waiting for callback with task token.",
+          "TaskToken.$": "$$.Task.Token"
+        }
+      },
+      "End": true
+    }
+  }
+}

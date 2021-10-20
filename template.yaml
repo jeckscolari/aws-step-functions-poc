@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+  PaymentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Payments
+      AttributeDefinitions:
+        - AttributeName: Id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: Id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  DynamoDBEventBridgeFanoutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: dynamodb-eventbridge-fanout
+      CodeUri: functions/dynamodb_eventbridge_fanout/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: default
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt PaymentsTable.StreamArn
+            BatchSize: 100
+            StartingPosition: LATEST
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: NotificationTopic
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SNSTopic
+      Endpoint: giacomo.scolari@leitha.eu
+      Protocol: email
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: DynamoStreamEventRule
+      EventPattern:
+        source:
+          - !Ref DynamoDBEventBridgeFanoutFunction
+      Targets:
+        - Arn: !Ref SNSTopic
+          Id: SNStopic
+
+  EventBridgeToToSnsPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SNSTopic
+      Topics:
+        - !Ref SNSTopic
+
+  QueueOut:
+    Type: AWS::SQS::Queue
+
+  ProcessPaymentStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: ProcessPaymentStateMachine
+      DefinitionUri: statemachine/workflow.asl.json
+      DefinitionSubstitutions:
+        QueueUrl: !Ref QueueOut
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt QueueOut.QueueName
+      Events:
+        EventBridgeRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: default
+            InputPath: $.detail
+            Pattern:
+              source:
+                - !Ref DynamoDBEventBridgeFanoutFunction
+
+  QueueIn:
+    Type: AWS::SQS::Queue
